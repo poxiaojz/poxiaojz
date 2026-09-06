@@ -7,14 +7,24 @@ description: Prevent repeated mistakes by reviewing and recording verified error
 
 Maintain a small, evidence-backed memory of mistakes and their fixes so future Claude sessions can avoid repeating them.
 
+## Memory scopes
+
+Use two memory scopes together:
+
+- Project memory: `.learnings/` under the current project. Store project-specific conventions, file behavior, and fixes here.
+- Global memory: `~/.learnings/` (on Windows, `%USERPROFILE%\.learnings\`) for environment, tool, and cross-project lessons.
+
+The global path defaults to the user's home directory and can be overridden with the `CLAUDE_ERROR_MEMORY_DIR` environment variable. Review project memory first, then global memory. When both contain a related lesson, prefer the project-specific one unless the issue is clearly environmental.
+
 ## Before starting work
 
 When the task is non-trivial or resembles earlier work:
 
-1. Inspect `.learnings/LEARNINGS.md` and `.learnings/ERRORS.md` if they exist.
-2. Search for entries related to the task's files, tools, error text, framework, or environment.
-3. Treat entries marked `pending` or `in_progress` as hypotheses, not confirmed rules. Prefer entries marked `resolved`.
-4. Apply relevant verified fixes before trying an approach that previously failed.
+1. Inspect project `.learnings/LEARNINGS.md` and `.learnings/ERRORS.md` if they exist.
+2. Inspect global `~/.learnings/LEARNINGS.md` and `.learnings/ERRORS.md` when the task involves system tools, dependencies, authentication, networking, or other cross-project behavior.
+3. Search for entries related to the task's files, tools, error text, framework, or environment.
+4. Treat entries marked `pending` or `in_progress` as hypotheses, not confirmed rules. Prefer entries marked `resolved`.
+5. Apply relevant verified fixes before trying an approach that previously failed.
 
 Do not load the entire learning history when a focused search is enough.
 
@@ -26,8 +36,9 @@ If `.learnings/` or either file does not exist, create the directory and the nee
 2. Search the learning files for the same or a similar failure before retrying.
 3. Do not repeat the identical failed operation without a changed hypothesis or new evidence.
 4. After the fix is verified, record the reusable lesson:
-   - Put a command, tool, or environment failure in `.learnings/ERRORS.md`.
-   - Put a corrected approach, project convention, or better method in `.learnings/LEARNINGS.md`.
+   - Put a project-specific command or file failure in the project's `.learnings/ERRORS.md`.
+   - Put a cross-project command, tool, or environment failure in global `.learnings/ERRORS.md`.
+   - Put a corrected approach, project convention, or better method in the matching `LEARNINGS.md`.
 5. If a matching entry already exists, update or link it and increase its recurrence count instead of creating noisy duplicates.
 
 Use the existing files' entry format and unique IDs such as `ERR-YYYYMMDD-XXX` or `LRN-YYYYMMDD-XXX`. Mark an entry `resolved` only after the proposed fix has actually worked.
@@ -87,4 +98,8 @@ When the same lesson recurs across tasks, or it is a stable project-wide convent
 ## Explicit use
 
 When the user asks to remember a fix, review past mistakes, or avoid repeating an error, use this Skill directly and report which learning file was updated.
+
+## Session-start check
+
+For automatic session-start review, use the bundled `scripts/session-start-check.js`. It reads both memory scopes and prints a compact context block for Claude. The repository README contains a ready-to-copy `SessionStart` hook configuration. Keep the hook fast and read-only; detailed searching and writing belong to the Skill workflow.
 
