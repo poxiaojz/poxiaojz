@@ -13,7 +13,7 @@
 也可以复制到个人 Skill 目录，让所有项目都能使用：
 
 ```text
-%USERPROFILE%\\.claude\\skills\\error-memory\\
+%USERPROFILE%\.claude\skills\error-memory\
 ```
 
 在 macOS 或 Linux 上对应 `~/.claude/skills/error-memory/`。
@@ -64,7 +64,7 @@ Claude Code 的 Skill 本身只负责提供规则，不会自动修改你的设�
 默认读取：
 
 - 项目级：当前项目的 `.learnings/`
-- 全局级：`~/.learnings/`；Windows 为 `%USERPROFILE%\\.learnings\\`
+- 全局级：`~/.learnings/`；Windows 为 `%USERPROFILE%\.learnings\`
 
 如需指定其他全局目录，设置环境变量 `CLAUDE_ERROR_MEMORY_DIR`。项目记忆优先于全局记忆；系统工具、网络、依赖和认证等跨项目问题适合记录在全局目录。
 
