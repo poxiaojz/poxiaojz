@@ -2,6 +2,12 @@
 
 让 Claude 在遇到错误、被纠正或找到可靠修复方案后，把可复用经验保存到项目的 `.learnings/` 目录；下次遇到类似任务时先查阅这些记录，减少重复踩坑。
 
+这个仓库包含三部分：
+
+- `SKILL.md`：Claude Code 使用规则；
+- `scripts/session-start-check.js`：SessionStart 只读摘要 Hook；
+- `scripts/error-memory.js`：本地检索、校验、记录和解决状态的 CLI。
+
 ## 安装到 Claude Code
 
 把本目录复制到项目的：
@@ -10,65 +16,59 @@
 .claude/skills/error-memory/
 ```
 
-也可以复制到个人 Skill 目录，让所有项目都能使用：
+也可以复制到个人 Skill 目录：
 
 ```text
 %USERPROFILE%\.claude\skills\error-memory\
 ```
 
-在 macOS 或 Linux 上对应 `~/.claude/skills/error-memory/`。
+macOS/Linux 对应 `~/.claude/skills/error-memory/`。
 
-安装后可直接输入：
+安装后可以输入 `/error-memory`，或直接描述“记住这个错误”“检查以前的解决方案”。
 
-```text
-/error-memory
+## 记忆范围
+
+- `.learnings/ERRORS.md`：命令、工具、环境等失败；
+- `.learnings/LEARNINGS.md`：纠正后的方法、项目约定和可复用经验；
+- 项目级记忆优先于全局记忆；全局目录默认为 `~/.learnings/`，也可以用 `CLAUDE_ERROR_MEMORY_DIR` 覆盖。
+
+每条记录至少应包含标准 ID、Priority、Status 和 Summary。建议额外填写 Tags、Files、Tools 和 Environment，帮助相关性检索。
+
+## CLI
+
+CLI 不依赖第三方包，需要 Node.js 18 或更高版本：
+
+```bash
+node scripts/error-memory.js search "Windows path"
+node scripts/error-memory.js validate
+node scripts/error-memory.js record --title "标题" --summary "摘要" --tags node,windows
+node scripts/error-memory.js resolve ERR-20260907-ABC
 ```
 
-或者在描述“记住这个错误”“检查以前的解决方案”“不要再重复这个问题”时让 Claude 自动调用。
+常用选项：
 
-## 记忆保存在哪里
+```text
+--cwd PATH                    项目根目录
+--global-dir PATH             全局记忆目录
+--limit N                     搜索结果数量
+--type error|learning         写入 ERRORS.md 或 LEARNINGS.md
+--scope project|global        写入项目级或全局级记忆
+```
 
-- `.learnings/ERRORS.md`：命令、工具、环境等操作失败
-- `.learnings/LEARNINGS.md`：纠正过的方法、项目约定和可复用经验
-
-Skill 不会修改 Claude 的模型参数，也不能保证错误永远不再发生；它通过项目文件提供跨会话的持久化记忆。
-
-## 安全原则
-
-Skill 会要求 Claude 脱敏记录错误，不保存密码、Token、API Key、隐私数据或完整日志；只有经过验证的修复方案才会标记为已解决。
+`record` 会创建标准 Markdown 条目，`validate` 会检查缺失字段、非法状态、重复 ID 和读取错误，`search` 会结合标题、摘要、标签、文件、工具、环境和状态进行排序。
 
 ## 会话开始自动检查
 
-Claude Code 的 Skill 本身只负责提供规则，不会自动修改你的设置。安装后把下面配置合并到项目的 `.claude/settings.json`，即可在新会话、恢复会话、`/clear` 和压缩上下文后自动检查项目级与全局级记忆：
+把 `examples/settings.project.json` 合并到项目的 `.claude/settings.json`，即可在启动、恢复、`/clear` 和上下文压缩时运行只读检查。已有 `settings.json` 时只合并 `hooks.SessionStart`，不要覆盖其他配置。
 
-    {
-      "hooks": {
-        "SessionStart": [
-          {
-            "matcher": "startup|resume|clear|compact",
-            "hooks": [
-              {
-                "type": "command",
-                "command": "node \"$CLAUDE_PROJECT_DIR/.claude/skills/error-memory/scripts/session-start-check.js\""
-              }
-            ]
-          }
-        ]
-      }
-    }
+Hook 会读取项目和全局记忆并输出最多 12 条相关摘要；它不会修改记忆文件，也不会执行记忆文件中的命令。可以通过 `ERROR_MEMORY_MAX_ITEMS` 调整数量；如果 Hook 输入包含 `query` 或 `prompt`，也会用于相关性检索。
 
-如果 `settings.json` 已经有其他配置，只合并 `hooks.SessionStart`，不要覆盖原有设置。对应的完整片段也放在 `examples/settings.project.json`。
+## 安全原则
 
-## 全局记忆
+不要保存密码、Token、API Key、私钥、私人数据或完整日志。CLI 和 Hook 会对常见凭据模式做基础脱敏，但脱敏不是安全审计，敏感信息仍不应写入记忆。
 
-默认读取：
+只有经过验证的修复方案才能标记为 `resolved`；未经验证的内容应保持 `pending`。
 
-- 项目级：当前项目的 `.learnings/`
-- 全局级：`~/.learnings/`；Windows 为 `%USERPROFILE%\.learnings\`
+## 中文说明
 
-如需指定其他全局目录，设置环境变量 `CLAUDE_ERROR_MEMORY_DIR`。项目记忆优先于全局记忆；系统工具、网络、依赖和认证等跨项目问题适合记录在全局目录。
-
-## 中文版
-
-`SKILL.zh-CN.md` 是方便中文用户维护的完整翻译版。Claude Code 默认加载 `SKILL.md`；中文版可作为人工维护和审阅参考。
-
+完整中文规则见 [`SKILL.zh-CN.md`](SKILL.zh-CN.md)。
