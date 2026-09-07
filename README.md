@@ -42,7 +42,7 @@ CLI 不依赖第三方包，需要 Node.js 18 或更高版本：
 node scripts/error-memory.js search "Windows path"
 node scripts/error-memory.js validate
 node scripts/error-memory.js record --title "标题" --summary "摘要" --tags node,windows
-node scripts/error-memory.js resolve ERR-20260907-ABC
+node scripts/error-memory.js resolve ERR-20260907-ABC --verified --fix "已实际验证的修复方法"
 ```
 
 常用选项：
@@ -72,3 +72,13 @@ Hook 会读取项目和全局记忆并输出最多 12 条相关摘要；它不�
 ## 中文说明
 
 完整中文规则见 [`SKILL.zh-CN.md`](SKILL.zh-CN.md)。
+
+## 集成测试反馈修复
+
+- 全局目录优先级：CLI 的 `--global-dir` > `CLAUDE_ERROR_MEMORY_DIR` > `~/.learnings/`；核心模块与 Hook 使用相同回退规则。
+- `resolve ID --verified --fix "修复方法"` 会同时保存验证标记与修复方法。若记录已包含 `Verified: yes` 和有效修复，可省略对应参数。
+- `--verified` 是调用者对实际验证的确认，程序不会替你运行修复命令。仅在真正验证成功后使用。
+- `record`、`resolve`、`validate` 对 resolved/promoted 使用同一规则：验证为 yes 且修复非空；旧记录缺少这些信息时会被提示，不会自动迁移。
+- `search` 无匹配但读取正常时退出 0；读取失败或解析警告时仍输出可用结果，但退出 1。SessionStart Hook 继续保持容错。
+- 补齐 `secret_key`、`secret-key`、`secretKey` 的基础脱敏。
+- 测试显式使用临时全局目录，不依赖用户真实记忆。运行 `node --test` 可执行单元与 CLI 子进程回归测试；这不等同于真实 Claude Code 会话验证。

@@ -21,7 +21,7 @@ Commands:
   search [query]                 Search project and global memory
   validate                      Validate all memory entries
   record --title T --summary S  Add a verified or pending entry
-  resolve ID                    Mark an entry as resolved
+  resolve ID --verified --fix F Mark verified repair as resolved
 
 Common options:
   --cwd PATH                    Project root (defaults to current directory)
@@ -40,7 +40,7 @@ Record options:
   --details TEXT                Error details or learning details
   --context TEXT                Reproduction or applicability context
   --fix TEXT                    Suggested fix or recommended approach
-  --verified                    Mark the record as verified
+  --verified                    Confirm the fix was actually tested (record/resolve)
   --scope project|global        Default: project
 `;
 }
@@ -74,7 +74,7 @@ function context(args) {
 }
 
 function fail(message) {
-  process.stderr.write(`Error Memory: ${message}\n`);
+  process.stderr.write(`Error Memory: ${redact(message)}\n`);
   process.exitCode = 1;
 }
 
@@ -94,6 +94,7 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(`Error Memory: ${entries.length} result(s)${query ? ` for "${redact(query)}"` : ""}\n`);
     for (const entry of entries) process.stdout.write(`${formatEntry(entry)}\n`);
     if (collected.errors.length) {
+      process.exitCode = 1;
       process.stdout.write("Warnings:\n");
       for (const error of collected.errors) process.stdout.write(`- ${redact(error)}\n`);
     }
@@ -138,7 +139,7 @@ function main(argv = process.argv.slice(2)) {
   if (command === "resolve") {
     const id = args._[1];
     if (!id) throw new Error("resolve requires an entry ID");
-    const filePath = updateStatus(id, "resolved", cwd, globalDirectory);
+    const filePath = updateStatus(id, "resolved", cwd, globalDirectory, { verified: args.verified, fix: args.fix });
     process.stdout.write(`Resolved ${id} in ${filePath}\n`);
     return;
   }

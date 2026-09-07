@@ -26,7 +26,7 @@ function expandPath(value) {
 
 function resolveScopes(projectRoot, globalDirectory) {
   const projectDir = path.join(path.resolve(projectRoot || process.cwd()), ".learnings");
-  const globalDir = expandPath(globalDirectory);
+  const globalDir = expandPath(globalDirectory || process.env.CLAUDE_ERROR_MEMORY_DIR);
   const scopes = [{ name: "project", directory: projectDir }];
   if (path.normalize(projectDir) !== path.normalize(globalDir)) {
     scopes.push({ name: "global", directory: globalDir });
@@ -41,8 +41,8 @@ function redact(value) {
     .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "[github-token redacted]")
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[aws-key redacted]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\-/]+=*/gi, "Bearer [redacted]")
-    .replace(/([?&](?:api[_-]?key|token|password|secret)=)[^&\s]+/gi, "$1[redacted]")
-    .replace(/(api[_-]?key|token|password|secret|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
+    .replace(/([?&](?:api[_-]?key|token|password|secret[_-]?key|secret)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/(api[_-]?key|token|password|secret[_-]?key|secret|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
 }
 
 function readText(filePath) {
@@ -107,6 +107,7 @@ function parseEntries(filePath, content, scopeName) {
       tools: listField(field(block, "Tools")),
       environment: listField(field(block, "Environment")),
       summary,
+      verified: /^-[ \t]+Verified:[ \t]+yes[ \t]*$/mi.test(section(block, "Metadata")),
       hasSummary: Boolean(section(block, "Summary")),
       details: section(block, "Error") || section(block, "Details"),
       context: section(block, "Context"),
@@ -153,6 +154,10 @@ function collectEntries(projectRoot, globalDirectory) {
   return { entries, errors, scopes };
 }
 
+function validResolution(verified, fix) {
+  return verified === true && typeof fix === "string" && Boolean(fix.trim()) && fix.trim() !== "Not provided.";
+}
+
 function validateEntries(entries) {
   const issues = [];
   const ids = new Map();
@@ -160,6 +165,9 @@ function validateEntries(entries) {
     if (!VALID_STATUSES.has(entry.status)) issues.push(`${entry.file}:${entry.line} ${entry.id}: missing or unknown Status`);
     if (!Object.hasOwn(PRIORITY_WEIGHT, entry.priority)) issues.push(`${entry.file}:${entry.line} ${entry.id}: invalid Priority "${entry.priority}"`);
     if (!entry.hasSummary) issues.push(`${entry.file}:${entry.line} ${entry.id}: missing Summary`);
+    if (["resolved", "promoted"].includes(entry.status) && !validResolution(entry.verified, entry.fix)) {
+      issues.push(`${entry.file}:${entry.line} ${entry.id}: resolved/promoted requires Verified: yes and a Suggested Fix`);
+    }
     if (ids.has(entry.id)) issues.push(`${entry.file}:${entry.line} ${entry.id}: duplicate ID also found in ${ids.get(entry.id)}`);
     ids.set(entry.id, `${entry.file}:${entry.line}`);
   }
@@ -271,7 +279,7 @@ function recordEntry(input, projectRoot, globalDirectory) {
   if (input.scope && !["project", "global"].includes(input.scope)) throw new Error("Invalid scope");
   if (!VALID_STATUSES.has(input.status || "pending")) throw new Error("Invalid status");
   if (!Object.hasOwn(PRIORITY_WEIGHT, input.priority || "medium")) throw new Error("Invalid priority");
-  if (["resolved", "promoted"].includes(input.status) && (!input.verified || !input.fix?.trim())) {
+  if (["resolved", "promoted"].includes(input.status) && !validResolution(input.verified, input.fix)) {
     throw new Error("Resolved records require --verified and --fix");
   }
   for (const key of ["title", "status", "priority", "area", "tags", "files", "tools", "environment"]) {
@@ -296,19 +304,53 @@ function recordEntry(input, projectRoot, globalDirectory) {
   return { id, filePath, block };
 }
 
-function updateStatus(id, status, projectRoot, globalDirectory) {
+function updateStatus(id, status, projectRoot, globalDirectory, options = {}) {
   if (!/^(ERR|LRN)-\d{8}-[A-Z0-9]+$/.test(id)) throw new Error("Invalid ID");
   if (!VALID_STATUSES.has(status)) throw new Error("Invalid status");
   const collected = collectEntries(projectRoot, globalDirectory);
-  for (const entry of collected.entries) {
-    if (entry.id !== id) continue;
-    const source = fs.readFileSync(entry.filePath, "utf8").replace(/^\uFEFF/, "");
-    const next = source.replace(new RegExp(`(## \\[${id}\\][\\s\\S]*?^\\*\\*Status\\*\\*:\\s*)[^\\n]+`, "m"), `$1${status}`);
-    if (next === source) throw new Error(`${id} has no editable Status field`);
-    fs.writeFileSync(entry.filePath, next, "utf8");
-    return entry.filePath;
+  if (collected.errors.length) throw new Error("Refusing to update: " + collected.errors.join("; "));
+  const matches = collected.entries.filter((entry) => entry.id === id);
+  if (matches.length !== 1) throw new Error(matches.length ? "Ambiguous duplicate ID" : "Memory entry not found: " + id);
+  const entry = matches[0];
+  const verified = options.verified === true || entry.verified;
+  const fix = options.fix === undefined ? entry.fix : redact(options.fix);
+  if (["resolved", "promoted"].includes(status) && !validResolution(verified, fix)) {
+    throw new Error("Resolved records require --verified and --fix (or existing Verified: yes and Suggested Fix)");
   }
-  throw new Error(`Memory entry not found: ${id}`);
+  // Restrict edits to this entry, including when another entry lacks a Status.
+  const source = fs.readFileSync(entry.filePath, "utf8");
+  const header = new RegExp("^\\uFEFF?## \\[" + id + "\\][^\\r\\n]*", "m").exec(source);
+  if (!header) throw new Error("Entry changed while updating");
+  const start = header.index;
+  const tail = source.slice(start + header[0].length);
+  const following = /^## \[/m.exec(tail);
+  const end = following ? start + header[0].length + following.index : source.length;
+  let block = source.slice(start, end);
+  if (!/^\*\*Status\*\*:[^\r\n]*/m.test(block)) throw new Error("Missing Status field");
+  block = block.replace(/^\*\*Status\*\*:[^\r\n]*/m, () => "**Status**: " + status);
+  const newline = block.includes("\r\n") ? "\r\n" : "\n";
+  if (options.fix !== undefined) {
+    const replacement = "### Suggested Fix" + newline + fix.trim() + newline + newline;
+    const fixSection = /^### Suggested Fix[ \t]*\r?\n[\s\S]*?(?=^### |^---[ \t]*\r?$|(?![\s\S]))/m;
+    if (fixSection.test(block)) block = block.replace(fixSection, () => replacement);
+    else block = block.replace(/(\r?\n---[ \t]*(?:\r?\n)?[ \t\r\n]*)?$/, () => newline + replacement + "---" + newline);
+  }
+  if (options.verified === true) {
+    const metadata = /^### Metadata[ \t]*\r?\n[\s\S]*?(?=^### |^---[ \t]*\r?$|(?![\s\S]))/m;
+    if (metadata.test(block)) {
+      block = block.replace(metadata, (part) => {
+        const flag = /^-[ \t]+Verified:[^\r\n]*/mi;
+        return flag.test(part) ? part.replace(flag, "- Verified: yes") : part.trimEnd() + newline + "- Verified: yes" + newline + newline;
+      });
+    } else {
+      block = block.replace(/(\r?\n---[ \t]*(?:\r?\n)?[ \t\r\n]*)?$/, () => newline + "### Metadata" + newline + "- Verified: yes" + newline + newline + "---" + newline);
+    }
+  }
+  const parsed = parseEntries(entry.filePath, block, entry.scopeName);
+  const issues = [...parsed.errors, ...validateEntries(parsed.entries)];
+  if (issues.length) throw new Error("Refusing invalid update: " + issues.join("; "));
+  fs.writeFileSync(entry.filePath, source.slice(0, start) + block + source.slice(end), "utf8");
+  return entry.filePath;
 }
 
 module.exports = {

@@ -20,7 +20,7 @@ function tempProject() {
 }
 
 test("parses legacy entries and validates required fields", () => {
-  const content = `## [ERR-20260907-AAA] Windows path issue\n**Logged**: 2026-09-07\n**Priority**: high\n**Status**: resolved\n**Area**: infra\n**Tags**: node, windows\n\n### Summary\nUse path.resolve for Windows paths.\n\n### Error\nA path was not found.\n\n---\n`;
+  const content = `## [ERR-20260907-AAA] Windows path issue\n**Logged**: 2026-09-07\n**Priority**: high\n**Status**: pending\n**Area**: infra\n**Tags**: node, windows\n\n### Summary\nUse path.resolve for Windows paths.\n\n### Error\nA path was not found.\n\n---\n`;
   const parsed = parseEntries("ERRORS.md", content, "project");
   assert.equal(parsed.entries.length, 1);
   assert.equal(parsed.entries[0].tags[1], "windows");
@@ -42,8 +42,10 @@ test("redacts credentials before they are displayed or written", () => {
   assert.equal(output.includes("?api_key=abc"), false);
 });
 
-test("records, validates, searches, and resolves an entry", () => {
+test("records, validates, searches, and resolves an entry", (t) => {
   const project = tempProject();
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  const globalDirectory = path.join(project, "isolated-global");
   const result = recordEntry({
     type: "error",
     title: "Node path fix",
@@ -56,11 +58,11 @@ test("records, validates, searches, and resolves an entry", () => {
     details: "Relative paths failed.",
     context: "Windows and nested projects.",
     fix: "Resolve paths from the project root.",
-  }, project);
-  const collected = collectEntries(project);
+  }, project, globalDirectory);
+  const collected = collectEntries(project, globalDirectory);
   assert.equal(collected.entries.length, 1);
   assert.deepEqual(validateEntries(collected.entries), []);
   assert.equal(searchEntries(collected.entries, "Windows nested paths", 1)[0].id, result.id);
-  updateStatus(result.id, "resolved", project);
-  assert.equal(collectEntries(project).entries[0].status, "resolved");
+  updateStatus(result.id, "resolved", project, globalDirectory, {verified: true});
+  assert.equal(collectEntries(project, globalDirectory).entries[0].status, "resolved");
 });
