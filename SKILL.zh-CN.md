@@ -103,3 +103,19 @@ description: 通过检查并记录已验证的错误、纠正方案和项目陷�
 
 当用户要求记住修复、检查过去的错误或避免重复问题时，直接使用本 Skill，并说明更新了哪个记忆文件。
 
+
+
+## CLI 与相关性检索
+
+无第三方依赖的 CLI 位于 `scripts/error-memory.js`：
+
+```text
+node scripts/error-memory.js search "关键词"
+node scripts/error-memory.js validate
+node scripts/error-memory.js record --title "..." --summary "..."
+node scripts/error-memory.js resolve ERR-YYYYMMDD-XXX
+```
+
+记录可以填写 `Tags`、`Files`、`Tools` 和 `Environment`。检索会结合完整文本、标题、元数据、状态、优先级、项目范围和时间进行排序。SessionStart Hook 与 CLI 共用同一套解析逻辑；如果 Hook JSON 中包含 `query`、`prompt` 或 `max_items`，也会使用它们。
+
+CLI 会检查必填字段、重复 ID、Priority 和读取错误。创建记录时会在写入前进行基础凭据脱敏，但这只是安全措施，不能替代人工检查；不要主动保存敏感信息。
