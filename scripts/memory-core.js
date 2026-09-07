@@ -8,6 +8,7 @@ const MEMORY_FILES = ["ERRORS.md", "LEARNINGS.md"];
 const DEFAULT_MAX_ITEMS = 12;
 const MAX_FILE_BYTES = 1024 * 1024;
 const RESOLVED_STATUSES = new Set(["resolved", "promoted", "wont_fix"]);
+const VALID_STATUSES = new Set(["pending", "in_progress", "resolved", "promoted", "wont_fix"]);
 const PRIORITY_WEIGHT = { critical: 4, high: 3, medium: 2, low: 1 };
 
 function expandPath(value) {
@@ -63,8 +64,15 @@ function field(block, name, fallback = "") {
 }
 
 function section(block, heading) {
-  const pattern = new RegExp(`^### ${heading}\\s*$([\\s\\S]*?)(?=^### |^---\\s*$|$)`, "mi");
-  return ((block.match(pattern) || ["", ""])[1] || "").trim();
+  const lines = block.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "### " + heading);
+  if (start < 0) return "";
+  const result = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^###\s/.test(line) || /^---\s*$/.test(line)) break;
+    result.push(line);
+  }
+  return result.join("\n").trim();
 }
 
 function listField(value) {
@@ -75,7 +83,7 @@ function listField(value) {
 }
 
 function parseEntries(filePath, content, scopeName) {
-  const source = String(content || "");
+  const source = String(content || "").replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
   const headers = Array.from(source.matchAll(/^## \[([A-Z]+-\d{8}-[A-Z0-9]+)\]\s*(.+)$/gm));
   const errors = [];
   const entries = headers.map((header, index) => {
@@ -91,7 +99,7 @@ function parseEntries(filePath, content, scopeName) {
       title: header[2].trim(),
       type,
       status: field(block, "Status", "unknown").toLowerCase(),
-      priority: field(block, "Priority", "low").toLowerCase(),
+      priority: field(block, "Priority").toLowerCase(),
       area: field(block, "Area"),
       logged: field(block, "Logged"),
       tags: listField(field(block, "Tags")),
@@ -99,6 +107,7 @@ function parseEntries(filePath, content, scopeName) {
       tools: listField(field(block, "Tools")),
       environment: listField(field(block, "Environment")),
       summary,
+      hasSummary: Boolean(section(block, "Summary")),
       details: section(block, "Error") || section(block, "Details"),
       context: section(block, "Context"),
       fix: section(block, "Suggested Fix") || section(block, "Recommended Approach"),
@@ -148,9 +157,9 @@ function validateEntries(entries) {
   const issues = [];
   const ids = new Map();
   for (const entry of entries) {
-    if (!entry.status || entry.status === "unknown") issues.push(`${entry.file}:${entry.line} ${entry.id}: missing or unknown Status`);
+    if (!VALID_STATUSES.has(entry.status)) issues.push(`${entry.file}:${entry.line} ${entry.id}: missing or unknown Status`);
     if (!Object.hasOwn(PRIORITY_WEIGHT, entry.priority)) issues.push(`${entry.file}:${entry.line} ${entry.id}: invalid Priority "${entry.priority}"`);
-    if (!entry.summary) issues.push(`${entry.file}:${entry.line} ${entry.id}: missing Summary`);
+    if (!entry.hasSummary) issues.push(`${entry.file}:${entry.line} ${entry.id}: missing Summary`);
     if (ids.has(entry.id)) issues.push(`${entry.file}:${entry.line} ${entry.id}: duplicate ID also found in ${ids.get(entry.id)}`);
     ids.set(entry.id, `${entry.file}:${entry.line}`);
   }
@@ -202,7 +211,7 @@ function entryBaseScore(entry) {
 
 function formatEntry(entry) {
   const match = [entry.tags, entry.files, entry.tools, entry.environment].flat().filter(Boolean).join(", ");
-  return `- [${entry.scopeName}] [${entry.id}] ${entry.status}/${entry.priority}: ${redact(entry.summary)}${match ? ` (${match})` : ""}`;
+  return redact(`- [${entry.scopeName}] [${entry.id}] ${entry.status}/${entry.priority}: ${redact(entry.summary)}${match ? ` (${match})` : ""}`);
 }
 
 function makeId(type, entries, now = new Date()) {
@@ -258,22 +267,38 @@ function renderRecord(input, id, now = new Date()) {
 
 function recordEntry(input, projectRoot, globalDirectory) {
   if (!input.title || !input.summary) throw new Error("record requires --title and --summary");
+  if (input.type && !["error", "learning"].includes(input.type)) throw new Error("Invalid type");
+  if (input.scope && !["project", "global"].includes(input.scope)) throw new Error("Invalid scope");
+  if (!VALID_STATUSES.has(input.status || "pending")) throw new Error("Invalid status");
+  if (!Object.hasOwn(PRIORITY_WEIGHT, input.priority || "medium")) throw new Error("Invalid priority");
+  if (["resolved", "promoted"].includes(input.status) && (!input.verified || !input.fix?.trim())) {
+    throw new Error("Resolved records require --verified and --fix");
+  }
+  for (const key of ["title", "status", "priority", "area", "tags", "files", "tools", "environment"]) {
+    if (/[\r\n]/.test(csv(input[key]))) throw new Error(key + " must be a single line");
+  }
   const collected = collectEntries(projectRoot, globalDirectory);
   const scopes = collected.scopes;
   const scopeName = input.scope === "global" ? "global" : "project";
-  const scope = scopes.find((item) => item.name === scopeName);
+  const scope = scopes.find((item) => item.name === scopeName) || scopes[0];
   const file = input.type === "learning" ? "LEARNINGS.md" : "ERRORS.md";
   const filePath = path.join(scope.directory, file);
-  fs.mkdirSync(scope.directory, { recursive: true });
+
   const id = makeId(input.type, collected.entries);
-  const content = readText(filePath).content;
+  const read = readText(filePath);
+  if (read.errors.length) throw new Error("Refusing to write: " + read.errors.join("; "));
+  const content = read.content;
   const block = renderRecord(input, id);
   const separator = content && !content.endsWith("\n") ? "\n" : "";
-  fs.writeFileSync(filePath, `${content}${separator}${block}`, "utf8");
+  fs.mkdirSync(scope.directory, { recursive: true });
+  // Append instead of rewriting the existing history.
+  fs.appendFileSync(filePath, `${separator}${block}`, "utf8");
   return { id, filePath, block };
 }
 
 function updateStatus(id, status, projectRoot, globalDirectory) {
+  if (!/^(ERR|LRN)-\d{8}-[A-Z0-9]+$/.test(id)) throw new Error("Invalid ID");
+  if (!VALID_STATUSES.has(status)) throw new Error("Invalid status");
   const collected = collectEntries(projectRoot, globalDirectory);
   for (const entry of collected.entries) {
     if (entry.id !== id) continue;
