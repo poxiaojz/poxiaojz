@@ -103,3 +103,19 @@ When the user asks to remember a fix, review past mistakes, or avoid repeating a
 
 For automatic session-start review, use the bundled `scripts/session-start-check.js`. It reads both memory scopes and prints a compact context block for Claude. The repository README contains a ready-to-copy `SessionStart` hook configuration. Keep the hook fast and read-only; detailed searching and writing belong to the Skill workflow.
 
+
+
+## CLI and relevance search
+
+The dependency-free CLI is available through `scripts/error-memory.js`:
+
+```text
+node scripts/error-memory.js search "keywords"
+node scripts/error-memory.js validate
+node scripts/error-memory.js record --title "..." --summary "..."
+node scripts/error-memory.js resolve ERR-YYYYMMDD-XXX
+```
+
+Records can include `Tags`, `Files`, `Tools`, and `Environment`. Search ranks exact text, titles, metadata, status, priority, project scope, and recency. The SessionStart hook uses the same shared parser and accepts `query`, `prompt`, and `max_items` from Hook JSON input when available.
+
+The CLI validates required fields, duplicate IDs, priorities, and read errors. Record creation applies basic credential redaction before writing. Redaction is only a safeguard; never intentionally store secrets.
