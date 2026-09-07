@@ -1,0 +1,11 @@
+{
+  "name": "error-memory-skill",
+  "private": true,
+  "description": "A dependency-free Claude Code skill for recording and retrieving verified errors and learnings.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
